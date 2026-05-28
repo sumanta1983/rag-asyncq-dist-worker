@@ -21,5 +21,9 @@ class Settings(BaseSettings):
     # Status hash TTL (seconds)
     status_ttl: int = 86400
 
+    # Circuit breaker
+    circuit_fail_threshold: int = 5
+    circuit_cooldown_s: int = 60
+
 
 settings = Settings()

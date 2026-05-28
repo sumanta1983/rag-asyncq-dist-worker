@@ -25,5 +25,13 @@ class Settings(BaseSettings):
     # Status hash TTL (seconds)
     status_ttl: int = 86400
 
+    # Circuit breaker
+    circuit_fail_threshold: int = 5
+    circuit_cooldown_s: int = 60
+
+    # Retry / dead-letter
+    max_deliveries: int = 3
+    dead_stream: str = "ingest_jobs_dead"
+
 
 settings = Settings()

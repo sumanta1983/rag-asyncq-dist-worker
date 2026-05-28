@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from .deps import ensure_collection
-from .routers import chat, ingest, query
+from .routers import chat, ingest, ops, query
 # from .routers import chat, embed, ingest, query
 
 
@@ -20,6 +20,7 @@ app = FastAPI(title="rag-asyncq api", lifespan=lifespan)
 app.include_router(ingest.router)
 app.include_router(query.router)
 app.include_router(chat.router)
+app.include_router(ops.router)
 # app.include_router(embed.router)
 
 

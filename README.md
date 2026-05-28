@@ -93,22 +93,61 @@ on the `ingest_jobs` stream — at-least-once delivery with per-message ack.
 ```
 POST /ingest                              → status: queued
 worker picks message off the stream       → status: processing
-worker finishes upsert + XACK             → status: done   (chunks=N, duration_s=…)
-worker raises an exception                → status: failed (error=…, NOT XACK'd → retryable)
+worker finishes upsert + XACK             → status: done     (chunks=N, duration_s=…)
+worker raises, attempt < max_deliveries   → status: retrying (re-enqueued)
+worker raises, attempt ≥ max_deliveries   → status: dead     (moved to ingest_jobs_dead)
 ```
 
 Status hashes live at `job:<job_id>` in Valkey with a 24h TTL.
+Retry counters live at `job_retries:<job_id>` (same TTL).
+
+## Guard rails
+
+### OpenAI circuit breaker
+After **5 consecutive OpenAI failures**, the breaker opens for **60 seconds**.
+While open:
+- `/query` and `/chat` return `503 Service Unavailable` with a `Retry-After` header.
+- Workers stop pulling new jobs from `ingest_jobs` (existing jobs stay durably
+  queued — no data loss). Any message already pulled when the breaker opens
+  is re-enqueued and ack'd so another worker can pick it up post-recovery.
+- A single successful call resets the failure counter.
+
+Tunable in env: `CIRCUIT_FAIL_THRESHOLD`, `CIRCUIT_COOLDOWN_S`.
+
+### Dead-letter queue
+A job that fails **3 times** moves to the `ingest_jobs_dead` stream and its
+status becomes `dead`. One poison PDF can't keep tripping the breaker.
+
+Tunable in env: `MAX_DELIVERIES`, `DEAD_STREAM`.
+
+### Ops endpoints
+```bash
+curl http://localhost/circuit                # show breaker state
+curl -X POST http://localhost/circuit/disable  # force open (maintenance)
+curl -X POST http://localhost/circuit/enable   # clear override + reset counters
+```
+
+You can also poke Valkey directly:
+```bash
+docker compose exec valkey valkey-cli SET openai:disabled 1     # kill switch
+docker compose exec valkey valkey-cli DEL openai:disabled openai:circuit_open_until openai:fail_count
+docker compose exec valkey valkey-cli XLEN ingest_jobs_dead     # how many poison jobs
+```
 
 ## Status
 
 Implemented:
-- All endpoints (`/ingest`, `/ingest/status`, `/query`, `/chat`, `/embed`, `/healthz`)
+- All endpoints (`/ingest`, `/ingest/status`, `/query`, `/chat`, `/circuit`, `/healthz`)
 - MMR retrieval, Baymax + gpt-5
 - At-least-once delivery via Valkey consumer groups
-- Per-job status tracking
+- Per-job status + retry tracking
+- OpenAI circuit breaker + manual kill switch
+- Dead-letter queue for poison messages
 
 Not yet:
-- PEL-claim loop for messages stranded by a permanently dead worker
+- PEL-claim loop for messages stranded by a permanently dead worker (currently
+  retry-by-re-enqueue handles ordinary failures; PEL claim would handle workers
+  that crash mid-job without raising an exception we can catch)
 - Auth on the API
 - SSE streaming for `/chat`
 - Tests
