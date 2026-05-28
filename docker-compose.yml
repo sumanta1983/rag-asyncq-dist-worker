@@ -8,6 +8,7 @@ volumes:
   qdrant_data:
   valkey_data:
   ingest_data:
+  sqlite_data:
 
 services:
   qdrant:
@@ -45,8 +46,10 @@ services:
       EMBED_DIMS: "3072"
       INGEST_STREAM: ingest_jobs
       CHAT_MODEL: gpt-5
+      DB_URL: sqlite:////data/app/app.db
     volumes:
       - ingest_data:/data/ingest
+      - sqlite_data:/data/app
     depends_on:
       - qdrant
       - valkey
@@ -76,6 +79,22 @@ services:
       replicas: 2
     restart: unless-stopped
 
+  web:
+    build: ./web
+    networks: [rag-net]
+    environment:
+      # Browser-side calls go through nginx at /api on the same origin.
+      # Server-side (RSC) calls inside the container need the docker DNS name.
+      NEXT_PUBLIC_API_BASE: /api
+      INTERNAL_API_BASE: http://api:8000
+      WATCHPACK_POLLING: "true"
+    volumes:
+      - ./web:/app
+      - /app/node_modules
+      - /app/.next
+    command: ["npm", "run", "dev"]
+    restart: unless-stopped
+
   nginx:
     image: nginx:1.27-alpine
     container_name: rag-nginx
@@ -86,4 +105,5 @@ services:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
     depends_on:
       - api
+      - web
     restart: unless-stopped

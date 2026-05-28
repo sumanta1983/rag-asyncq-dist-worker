@@ -1,10 +1,14 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from openai import OpenAIError
 from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
 
 from .. import circuit
+from ..auth.deps import get_current_user
 from ..config import settings
+from ..db import get_db
 from ..deps import get_openai, get_valkey, get_vector_store
+from ..models import QueryLog, User
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -31,7 +35,7 @@ class ChatRequest(BaseModel):
 def _format_page(meta: dict) -> str:
     page = meta.get("page", "N/A")
     if isinstance(page, int):
-        return str(page + 1)  # PyMuPDF is 0-indexed; humans expect 1-indexed
+        return str(page + 1)
     return str(page)
 
 
@@ -47,7 +51,11 @@ def _build_context(results) -> str:
 
 
 @router.post("")
-def chat(req: ChatRequest):
+def chat(
+    req: ChatRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     r = get_valkey()
     if circuit.is_open(r):
         retry_after = circuit.seconds_until_close(r) or settings.circuit_cooldown_s
@@ -59,18 +67,17 @@ def chat(req: ChatRequest):
 
     k = req.k or settings.mmr_k
     fetch_k = req.fetch_k or settings.mmr_fetch_k
+    model = req.model or settings.chat_model
 
     try:
         results = get_vector_store().max_marginal_relevance_search(
             query=req.query, k=k, fetch_k=fetch_k
         )
         context = _build_context(results)
-
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT_TEMPLATE.format(context=context)},
             {"role": "user", "content": req.query},
         ]
-        model = req.model or settings.chat_model
         completion = get_openai().chat.completions.create(model=model, messages=messages)
     except OpenAIError as e:
         circuit.record_failure(
@@ -81,10 +88,15 @@ def chat(req: ChatRequest):
         raise HTTPException(status_code=502, detail=f"upstream OpenAI error: {e}")
 
     circuit.record_success(r)
+    answer = completion.choices[0].message.content
+
+    db.add(QueryLog(user_id=user.id, endpoint="/chat", query=req.query, answer=answer, model=model))
+    db.commit()
+
     return {
         "query": req.query,
         "model": model,
-        "answer": completion.choices[0].message.content,
+        "answer": answer,
         "sources": [
             {
                 "page": _format_page(doc.metadata),

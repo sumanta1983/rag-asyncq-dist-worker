@@ -25,5 +25,16 @@ class Settings(BaseSettings):
     circuit_fail_threshold: int = 5
     circuit_cooldown_s: int = 60
 
+    # Auth + DB
+    db_url: str = "sqlite:////data/app/app.db"
+    jwt_secret: str = "change-me-in-env"
+    jwt_algorithm: str = "HS256"
+    jwt_expire_minutes: int = 60 * 24 * 7  # 7 days
+
+    # Admin bootstrap (only used on first boot when no admin exists)
+    admin_mobile: str = ""
+    admin_name: str = "Admin"
+    admin_password: str = ""
+
 
 settings = Settings()
