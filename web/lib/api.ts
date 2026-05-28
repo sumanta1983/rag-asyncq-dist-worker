@@ -14,6 +14,30 @@ export class ApiError extends Error {
   }
 }
 
+function extractMessage(body: unknown, status: number): string {
+  if (body && typeof body === "object" && "detail" in body) {
+    const detail = (body as { detail: unknown }).detail;
+    if (typeof detail === "string") return detail;
+    if (Array.isArray(detail)) {
+      // FastAPI / Pydantic 422 validation errors
+      return detail
+        .map((e) => {
+          if (e && typeof e === "object" && "msg" in e) {
+            const loc = "loc" in e && Array.isArray((e as { loc: unknown[] }).loc)
+              ? (e as { loc: (string | number)[] }).loc.filter((p) => p !== "body").join(".")
+              : "";
+            const msg = String((e as { msg: unknown }).msg);
+            return loc ? `${loc}: ${msg}` : msg;
+          }
+          return JSON.stringify(e);
+        })
+        .join("; ");
+    }
+  }
+  if (typeof body === "string" && body) return body;
+  return `HTTP ${status}`;
+}
+
 async function request(path: string, init: RequestInit = {}): Promise<Response> {
   const headers = new Headers(init.headers || {});
   const token = getToken();
@@ -29,10 +53,7 @@ async function request(path: string, init: RequestInit = {}): Promise<Response> 
     } catch {
       body = await res.text().catch(() => null);
     }
-    const detail =
-      (body && typeof body === "object" && "detail" in body && (body as { detail?: string }).detail) ||
-      `HTTP ${res.status}`;
-    throw new ApiError(res.status, body, String(detail));
+    throw new ApiError(res.status, body, extractMessage(body, res.status));
   }
   return res;
 }
