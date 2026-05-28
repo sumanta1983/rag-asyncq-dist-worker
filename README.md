@@ -18,6 +18,7 @@ Browser ─▶ Nginx :80 ─┬─▶ /api/*  ──▶ FastAPI x3 ──▶ Val
 ```
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full picture.
+
 See [FullDoc.pdf](FullDoc.pdf) Explain Full Architecture in details.
 
 ## Layout
