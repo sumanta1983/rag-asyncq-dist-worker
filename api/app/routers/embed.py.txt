@@ -1,0 +1,16 @@
+from fastapi import APIRouter
+from pydantic import BaseModel, Field
+
+from ..deps import get_embedder
+
+router = APIRouter(prefix="/embed", tags=["embed"])
+
+
+class EmbedRequest(BaseModel):
+    texts: list[str] = Field(min_length=1)
+
+
+@router.post("")
+def embed(req: EmbedRequest):
+    vectors = get_embedder().embed_documents(req.texts)
+    return {"count": len(vectors), "dims": len(vectors[0]) if vectors else 0, "vectors": vectors}

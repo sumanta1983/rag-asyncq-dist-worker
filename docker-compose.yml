@@ -1,0 +1,89 @@
+name: rag-asyncq
+
+networks:
+  rag-net:
+    driver: bridge
+
+volumes:
+  qdrant_data:
+  valkey_data:
+  ingest_data:
+
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.12.4
+    container_name: rag-qdrant
+    networks: [rag-net]
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    restart: unless-stopped
+
+  valkey:
+    image: valkey/valkey:8.0-alpine
+    container_name: rag-valkey
+    networks: [rag-net]
+    ports:
+      - "6379:6379"
+    command: ["valkey-server", "--appendonly", "yes"]
+    volumes:
+      - valkey_data:/data
+    restart: unless-stopped
+
+  api:
+    build: ./api
+    networks: [rag-net]
+    env_file: .env
+    environment:
+      QDRANT_URL: http://qdrant:6333
+      VALKEY_URL: redis://valkey:6379/0
+      INGEST_DIR: /data/ingest
+      QDRANT_COLLECTION: learning_langchain
+      EMBED_MODEL: text-embedding-3-large
+      EMBED_DIMS: "3072"
+      INGEST_STREAM: ingest_jobs
+      CHAT_MODEL: gpt-5
+    volumes:
+      - ingest_data:/data/ingest
+    depends_on:
+      - qdrant
+      - valkey
+    deploy:
+      replicas: 3
+    restart: unless-stopped
+
+  worker:
+    build: ./worker
+    networks: [rag-net]
+    env_file: .env
+    environment:
+      QDRANT_URL: http://qdrant:6333
+      VALKEY_URL: redis://valkey:6379/0
+      INGEST_DIR: /data/ingest
+      QDRANT_COLLECTION: learning_langchain
+      EMBED_MODEL: text-embedding-3-large
+      EMBED_DIMS: "3072"
+      INGEST_STREAM: ingest_jobs
+      CONSUMER_GROUP: ingest_workers
+    volumes:
+      - ingest_data:/data/ingest
+    depends_on:
+      - qdrant
+      - valkey
+    deploy:
+      replicas: 2
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: rag-nginx
+    networks: [rag-net]
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - api
+    restart: unless-stopped
