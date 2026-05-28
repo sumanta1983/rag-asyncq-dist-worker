@@ -1,7 +1,7 @@
 pydantic-settings==2.6.1
 redis==5.2.0
 qdrant-client==1.12.1
-openai==1.55.0
+openai==1.57.4
 langchain==0.3.7
 langchain-openai==0.2.9
 langchain-qdrant==0.2.0
