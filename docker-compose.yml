@@ -70,29 +70,15 @@ services:
       EMBED_DIMS: "3072"
       INGEST_STREAM: ingest_jobs
       CONSUMER_GROUP: ingest_workers
+      DB_URL: sqlite:////data/app/app.db
     volumes:
       - ingest_data:/data/ingest
+      - sqlite_data:/data/app
     depends_on:
       - qdrant
       - valkey
     deploy:
       replicas: 2
-    restart: unless-stopped
-
-  web:
-    build: ./web
-    networks: [rag-net]
-    environment:
-      # Browser-side calls go through nginx at /api on the same origin.
-      # Server-side (RSC) calls inside the container need the docker DNS name.
-      NEXT_PUBLIC_API_BASE: /api
-      INTERNAL_API_BASE: http://api:8000
-      WATCHPACK_POLLING: "true"
-    volumes:
-      - ./web:/app
-      - /app/node_modules
-      - /app/.next
-    command: ["npm", "run", "dev"]
     restart: unless-stopped
 
   nginx:
@@ -105,5 +91,4 @@ services:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
     depends_on:
       - api
-      - web
     restart: unless-stopped

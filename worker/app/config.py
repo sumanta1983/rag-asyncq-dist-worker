@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     consumer_group: str = "ingest_workers"
     embed_model: str = "text-embedding-3-large"
     embed_dims: int = 3072
+    
+    # Shared SQLite DB used by API + worker
+    db_url: str = "sqlite:////data/app/app.db"
 
     # Splitter — mirrors rag_system/index_pdf.py
     chunk_size: int = 1500
@@ -32,6 +35,12 @@ class Settings(BaseSettings):
     # Retry / dead-letter
     max_deliveries: int = 3
     dead_stream: str = "ingest_jobs_dead"
+
+    # Ingestion quality checks
+    quality_min_len: int = 50
+    quality_drop_bad: bool = True
+    quality_dedupe: bool = True
+    quality_enable_ascii_noise_check: bool = False
 
 
 settings = Settings()

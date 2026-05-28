@@ -12,7 +12,7 @@ from .config import settings
 from .db import engine, session_scope
 from .deps import ensure_collection
 from .models import Base, User
-from .routers import auth, chat, history, ingest, ops, query
+from .routers import auth, chat, history, ingest, ops, query, admin_quality
 
 log = logging.getLogger("api")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s [%(name)s] %(message)s")
@@ -67,6 +67,7 @@ app.include_router(query.router)
 app.include_router(chat.router)
 app.include_router(history.router)
 app.include_router(ops.router)
+app.include_router(admin_quality.router)
 
 
 @app.get("/healthz")

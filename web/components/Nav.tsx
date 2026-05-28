@@ -21,9 +21,14 @@ export default function Nav() {
         <Link href="/chat" className="text-sm text-slate-600 hover:text-slate-900">Chat</Link>
         <Link href="/history" className="text-sm text-slate-600 hover:text-slate-900">History</Link>
         {user.role === "admin" && (
-          <Link href="/admin/ingest" className="text-sm text-slate-600 hover:text-slate-900">
-            Ingest (admin)
-          </Link>
+          <>
+            <Link href="/admin/ingest" className="text-sm text-slate-600 hover:text-slate-900">
+              Ingest (admin)
+            </Link>
+            <Link href="/admin/ingestion-quality" className="text-sm text-slate-600 hover:text-slate-900">
+              Quality (admin)
+            </Link>
+          </>
         )}
         <span className="ml-auto text-sm text-slate-500">
           {user.name} · <span className="uppercase tracking-wider text-xs">{user.role}</span>

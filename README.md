@@ -3,16 +3,17 @@
 Async distributed RAG with auth, admin-curated corpus, and a Next.js chat UI.
 
 - **Admin** uploads PDFs through the web UI; ingest is queued on Valkey, workers
-  chunk + embed (OpenAI `text-embedding-3-large`) + upsert to Qdrant.
+  chunk + **run ingestion quality checks** + embed (OpenAI `text-embedding-3-large`) + upsert to Qdrant.
 - **Registered users** sign in with mobile + password and chat against the
   corpus using the Baymax prompt + gpt-5.
-- Every query and job is logged in SQLite, tied to a user.
+- Every query, job, **and ingestion quality report** is logged in SQLite, tied
+  to a user / job.
 - An OpenAI **circuit breaker** keeps the system from burning quota when the
   upstream is unhealthy.
 
 ```
-Browser ─▶ Nginx :80 ─┬─▶ /api/*  ──▶ FastAPI x3 ──▶ Valkey stream ──▶ Worker x2 ──▶ Qdrant
-                     │                       └─▶ SQLite (users, queries, jobs)
+Browser ─▶ Nginx :80 ─┬─▶ /api/*  ──▶ FastAPI x3 ──▶ Valkey stream ──▶ Worker x2 ──┬─▶ Qdrant (vectors)
+                     │                       └─▶ SQLite (users, queries, jobs)    └─▶ SQLite (quality log)
                      └─▶ /        ──▶ Next.js (Login · Register · Chat · Admin)
 ```
 
@@ -49,10 +50,10 @@ at `/register`.
 
 ## Roles
 
-| Role  | Can do                                                    |
-|-------|-----------------------------------------------------------|
-| user  | `/register`, `/login`, `/chat`, `/history` (own queries)  |
-| admin | everything above + `/admin/ingest` + `/circuit` + jobs log |
+| Role  | Can do                                                                            |
+|-------|-----------------------------------------------------------------------------------|
+| user  | `/register`, `/login`, `/chat`, `/history` (own queries)                          |
+| admin | everything above + `/admin/ingest` + `/admin/ingestion-quality` + `/circuit` + jobs log |
 
 The first admin is created from `ADMIN_MOBILE` / `ADMIN_PASSWORD` on first boot
 (idempotent — safe to keep these set across restarts; nothing happens if an
@@ -68,16 +69,19 @@ POST   /api/auth/register     {name, mobile, password, confirm_password}
 POST   /api/auth/login        {mobile, password}
 GET    /api/auth/me           current user
 
-POST   /api/ingest            (admin)  multipart file=PDF
-GET    /api/ingest/status/:id (admin)
-POST   /api/query             MMR retrieval (no LLM)
-POST   /api/chat              MMR + Baymax + gpt-5
-GET    /api/history/queries   user's own past queries
-GET    /api/history/jobs      (admin)  every ingest job
+POST   /api/ingest                          (admin)  multipart file=PDF
+GET    /api/ingest/status/:id               (admin)
+POST   /api/query                           MMR retrieval (no LLM)
+POST   /api/chat                            MMR + Baymax + gpt-5
+GET    /api/history/queries                 user's own past queries
+GET    /api/history/jobs                    (admin)  every ingest job
 
-GET    /api/circuit           (admin)
-POST   /api/circuit/disable   (admin)
-POST   /api/circuit/enable    (admin)
+GET    /api/admin/ingestion-quality         (admin)  paginated quality reports
+GET    /api/admin/ingestion-quality/:job_id (admin)  reports for one job
+
+GET    /api/circuit                         (admin)
+POST   /api/circuit/disable                 (admin)
+POST   /api/circuit/enable                  (admin)
 GET    /healthz
 ```
 
@@ -98,6 +102,47 @@ curl -F "file=@doc.pdf" -H "Authorization: Bearer $TOKEN" http://localhost/api/i
 ```
 
 Regular users **cannot** call `/ingest` — they get `403 admin role required`.
+
+## Ingestion quality checks
+
+Before chunks are embedded and pushed to Qdrant, the worker runs each chunk
+through a set of cheap text-quality checks ([worker/app/ingest_checks.py](worker/app/ingest_checks.py)):
+
+- **Length**: too short (< 50 chars) or too long (> 1800 chars) → flagged.
+- **Effectively empty after cleaning** (< 30 chars after whitespace collapse).
+- **Lexical diversity**: only checked if ≥ 20 words. If unique-word ratio
+  falls below 35 %, the chunk is flagged as low-diversity / repetitive.
+- **Duplicate detection**: chunks with identical normalised text (md5 of
+  whitespace-collapsed content) are dropped on the second occurrence.
+- **Non-ASCII noise** (off by default — Bengali/Hindi PDFs would be wrongly
+  rejected; flip `QUALITY_ENABLE_ASCII_NOISE_CHECK=true` to enable).
+
+Per-job a report row is written to the `ingestion_quality_log` table:
+
+| Column | Meaning |
+|---|---|
+| `job_id`, `filename` | Identifies the upload |
+| `original_chunks` | What the splitter produced |
+| `checked_chunks` | How many ran through the validator |
+| `kept_chunks` | Survived into Qdrant |
+| `rejected_chunks` | Failed quality (dropped if `QUALITY_DROP_BAD=true`) |
+| `duplicate_chunks` | Identical-hash dupes within the same job |
+| `quality_passed` | `True` when no rejects or duplicates |
+| `issues_json` | Issue → count summary |
+| `sample_issues_json` | First 5 problem chunks with page + preview |
+
+Admins view this at **`/admin/ingestion-quality`** in the Next.js UI
+(table with: Time · File · Job ID · Original · Kept · Rejected · Duplicates · Status)
+or via the REST endpoints listed above.
+
+Tunable via worker env vars:
+
+```
+QUALITY_MIN_LEN=50                         # min chars per chunk
+QUALITY_DROP_BAD=true                      # drop rejects vs. keep & flag
+QUALITY_DEDUPE=true                        # dedupe by content hash
+QUALITY_ENABLE_ASCII_NOISE_CHECK=false     # enable for English-only corpora
+```
 
 ## Guard rails (unchanged from previous iteration)
 
@@ -122,9 +167,10 @@ write contention.
 
 Implemented:
 - Auth (register / login / JWT) + bcrypt password hashing
-- SQLite (users, query_log, job_log) shared across api replicas
+- SQLite (users, query_log, job_log, **ingestion_quality_log**) shared across api & worker
 - Admin-only ingest + per-user query history + admin-only job history
-- Next.js UI: login, register, chat, admin/ingest, history
+- **Per-chunk ingestion quality validation + per-job quality report stored in SQLite**
+- Next.js UI: login, register, chat, admin/ingest, **admin/ingestion-quality**, history
 - MMR retrieval + Baymax + gpt-5
 - At-least-once delivery, per-job retry, dead-letter queue
 - OpenAI circuit breaker + manual kill switch
